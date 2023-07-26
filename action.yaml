@@ -1,0 +1,67 @@
+name: tflintadate
+description: Recursively validates and init terraform code in repos
+inputs:
+  repo:
+    description: The repo you are running this flow on
+    required: true
+
+runs:
+  using: "composite"
+  #    runs-on: [self-hosted, infra-runners]
+  steps:
+    - name: Check required inputs are set
+      shell: bash
+      env:
+        REPO: ${{ inputs.repo }}
+      run: |
+        [[ -z "${REPO}" ]] && echo "::error::required input \"repo\" not set or empty" && exit 1
+        exit 0
+
+    - uses: terraform-linters/setup-tflint@v1
+      name: Setup TFLint
+      with:
+        tflint_version: v0.39.2
+
+    - name: 'Setup Terraform'
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.4.2
+
+    - name: Show versions
+      run: |
+        terraform --version
+        tflint --version
+          
+    - name: Checkout repo
+      uses: actions/checkout@v3
+      with:
+        path: ${{ inputs.repo }}
+
+          
+    - name: Terraform Init
+      working-directory: ${{ inputs.repo }}
+      run: |
+          find . -type f -name "*.tf" -exec dirname {} \; |
+          sort -u |
+          while read m; do (
+            cd "$m" &&
+            terraform init -input=false &&
+            echo "√ $m"
+          ) || {
+            touch check-failed;
+            echo "✗ $m";
+          }; done; [[ ! -f check-failed ]]
+          
+    - name: Validate Terraform configs
+      working-directory: ${{ inputs.repo }}
+      run:
+        find . -name ".terraform" -prune -o -type f -name "*.tf"
+          -exec dirname {} \; |
+        sort -u |
+        while read m; do (
+          cd "$m" && terraform validate && tflint &&
+           echo "√ $m";
+          ) || {
+          touch check-failed;
+          echo "✗ $m";
+        }; done; [[ ! -f check-failed ]]
